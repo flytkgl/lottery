@@ -13,6 +13,9 @@ import { NUMBER_MATRIX } from "./config.js";
 const ROTATE_TIME = 3000;
 const BASE_HEIGHT = 1080;
 
+var zperCount,zleftCount,tempuserdata = [];
+var repeat = true;//重新抽奖时是否包含上一次中奖的名单
+
 let TOTAL_CARDS,
   btns = {
     enter: document.querySelector("#enter"),
@@ -220,7 +223,7 @@ function bindEvent() {
       // 进入抽奖
       case "enter":
         removeHighlight();
-        addQipao(`马上抽取[${currentPrize.title}],不要走开。`);
+        addQipao(`Draw[${currentPrize.title}]now, and don't walk away.`);
         // rotate = !rotate;
         rotate = true;
         switchScreen("lottery");
@@ -228,12 +231,12 @@ function bindEvent() {
       // 重置
       case "reset":
         let doREset = window.confirm(
-          "是否确认重置数据，重置后，当前已抽的奖项全部清空？"
+          "Are you sure to reset the data and empty all the currently drawn prizes after the reset?"
         );
         if (!doREset) {
           return;
         }
-        addQipao("重置所有数据，重新抽奖");
+        addQipao("Reset all data and redraw");
         addHighlight();
         resetCard();
         // 重置所有数据
@@ -242,6 +245,8 @@ function bindEvent() {
         basicData.luckyUsers = {};
         currentPrizeIndex = basicData.prizes.length - 1;
         currentPrize = basicData.prizes[currentPrizeIndex];
+        zperCount = EACH_COUNT[currentPrizeIndex];
+        zleftCount = basicData.users.length;
 
         resetPrize(currentPrizeIndex);
         reset();
@@ -252,28 +257,50 @@ function bindEvent() {
         setLotteryStatus(true);
         // 每次抽奖前先保存上一次的抽奖数据
         saveData();
+        //抽奖前先备份一次可抽奖人员名单,重抽用到
+        tempuserdata = JSON.parse(JSON.stringify(basicData.leftUsers));
+        // 当前同时抽取的数目,当前奖品抽完还可以继续抽，但是不记录数据
+        zperCount = EACH_COUNT[currentPrizeIndex],//每次抽奖数量
+        zleftCount = basicData.leftUsers.length;//可参与抽奖人数
+        if (zleftCount === 0) {
+          addQipao("人员已抽完，现在重新设置所有人员可以进行二次抽奖！");
+          basicData.leftUsers = basicData.users;
+          zleftCount = basicData.leftUsers.length;
+        }else if(zleftCount < zperCount){
+            zperCount = zleftCount;
+        }
+        let luckys = basicData.luckyUsers[currentPrize.type];
+        let luckyCount = currentPrize.count - (luckys ? luckys.length : 0);
+        if(luckyCount < zperCount){
+            zperCount = luckyCount;
+        }
         //更新剩余抽奖数目的数据显示
-        changePrize();
+        changePrize(zperCount);
         resetCard().then(res => {
           // 抽奖
-          lottery();
+          lottery(zperCount,zleftCount);
         });
-        addQipao(`正在抽取[${currentPrize.title}],调整好姿势`);
+        addQipao(`Drawing [${currentPrize.title}],Ready`);
         break;
       // 重新抽奖
       case "reLottery":
         if (currentLuckys.length === 0) {
-          addQipao(`当前还没有抽奖，无法重新抽取喔~~`);
+          addQipao(`Currently there is no lucky draw, can not draw again oh ~~`);
           return;
         }
-        setErrorData(currentLuckys);
-        addQipao(`重新抽取[${currentPrize.title}],做好准备`);
+        //重新抽奖时,是否包含刚才中奖的名单
+        if(repeat){
+            basicData.leftUsers = JSON.parse(JSON.stringify(tempuserdata));
+        }else{
+            setErrorData(currentLuckys);
+        }
+        addQipao(`Drawing[${currentPrize.title}],Ready`);
         setLotteryStatus(true);
         // 重新抽奖则直接进行抽取，不对上一次的抽奖数据进行保存
         // 抽奖
         resetCard().then(res => {
           // 抽奖
-          lottery();
+          lottery(zperCount,zleftCount);
         });
         break;
       // 导出抽奖结果
@@ -284,7 +311,7 @@ function bindEvent() {
             currentLuckys = [];
           });
           exportData();
-          addQipao(`数据已保存到EXCEL中。`);
+          addQipao(`The data has been saved to EXCEL.`);
         });
         break;
     }
@@ -340,7 +367,7 @@ function createCard(user, isBold, id, showTable) {
 
   element.appendChild(createElement("name", user[1]));
 
-  element.appendChild(createElement("details", user[0] + "<br/>" + user[2]));
+  element.appendChild(createElement("details", `${currentPrize.title}`));
   return element;
 }
 
@@ -586,26 +613,17 @@ function resetCard(duration = 500) {
 /**
  * 抽奖
  */
-function lottery() {
+function lottery(perCount,leftCount) {
   rotateBall().then(() => {
     // 将之前的记录置空
     currentLuckys = [];
     selectedCardIndex = [];
-    // 当前同时抽取的数目,当前奖品抽完还可以继续抽，但是不记录数据
-    let perCount = EACH_COUNT[currentPrizeIndex],
-      leftCount = basicData.leftUsers.length;
-
-    if (leftCount === 0) {
-      addQipao("人员已抽完，现在重新设置所有人员可以进行二次抽奖！");
-      basicData.leftUsers = basicData.users;
-      leftCount = basicData.leftUsers.length;
-    }
 
     for (let i = 0; i < perCount; i++) {
       let luckyId = random(leftCount);
       currentLuckys.push(basicData.leftUsers.splice(luckyId, 1)[0]);
       leftCount--;
-
+        
       let cardIndex = random(TOTAL_CARDS);
       while (selectedCardIndex.includes(cardIndex)) {
         cardIndex = random(TOTAL_CARDS);
@@ -613,7 +631,7 @@ function lottery() {
       selectedCardIndex.push(cardIndex);
     }
 
-    // console.log(currentLuckys);
+    //console.log(currentLuckys);
     selectCard();
   });
 }
@@ -631,9 +649,7 @@ function saveData() {
     curLucky = basicData.luckyUsers[type] || [];
 
   curLucky = curLucky.concat(currentLuckys);
-
   basicData.luckyUsers[type] = curLucky;
-
   if (currentPrize.count <= curLucky.length) {
     currentPrizeIndex--;
     if (currentPrizeIndex <= -1) {
@@ -649,9 +665,9 @@ function saveData() {
   return Promise.resolve();
 }
 
-function changePrize() {
+function changePrize(perCount) {
   let luckys = basicData.luckyUsers[currentPrize.type];
-  let luckyCount = (luckys ? luckys.length : 0) + EACH_COUNT[currentPrizeIndex];
+  let luckyCount = (luckys ? luckys.length : 0) + perCount;
   // 修改左侧prize的数目和百分比
   setPrizeData(currentPrizeIndex, luckyCount);
 }
@@ -672,7 +688,7 @@ function changeCard(cardIndex, user) {
 
   card.innerHTML = `<div class="company">${COMPANY}</div><div class="name">${
     user[1]
-  }</div><div class="details">${user[0]}<br/>${user[2] || "PSST"}</div>`;
+  }</div><div class="details">${currentPrize.title}</div>`;
 }
 
 /**
@@ -698,6 +714,9 @@ function shineCard() {
       return;
     }
     maxUser = basicData.leftUsers.length;
+    if (maxUser == 0) {
+      return;
+    }
     for (let i = 0; i < shineCard; i++) {
       let index = random(maxUser),
         cardIndex = random(TOTAL_CARDS);
@@ -761,7 +780,7 @@ function reset() {
   window.AJAX({
     url: "/reset",
     success(data) {
-      console.log("重置成功");
+      console.log("Reset the success");
     }
   });
 }
@@ -818,7 +837,7 @@ window.onload = function() {
             animate();
           },
           () => {
-            addQipao("背景音乐自动播放失败，请手动播放！");
+            addQipao("Background music auto play failed, please manually play!");
           }
         );
       } else {
